@@ -1,0 +1,27 @@
+idf_component_register(SRCS
+    "main.c"
+    "settings/display/display_init.c"
+    "settings/touch/touch.c"
+    "settings/wifi/wifi_ap.c"
+    "settings/wifi/tcp_server.c"
+    "settings/time/rtc_time.c"
+    "settings/time/time_from_build.c"
+    "GUI/wallpaper/wallpaper800400.c"
+    "GUI/fonts/my_arial24.c"
+    "GUI/ui/ui.c"
+    "GUI/ui/ui1.c"
+    "GUI/ui/ui_pomodoro.c"
+    "GUI/ui/ui_cucumber.c"
+    
+    INCLUDE_DIRS 
+        "."
+        "settings/display"
+        "settings/touch"
+        "settings/wifi"
+        "settings/time"
+        "GUI/wallpaper"
+        "GUI/fonts"
+        "GUI/ui"
+    REQUIRES lvgl esp_lvgl_port driver nvs_flash esp_psram esp_wifi esp_netif esp_psram
+)
+
