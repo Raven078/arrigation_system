@@ -1,7 +1,7 @@
 # Проект ESP32-S3 Touch LCD 7 с точкой доступа и мониторингом теплиц
-[![Language: C++](https://img.shields.io/badge/Language-C%2B%2B-blue.svg)](https://en.wikipedia.org/wiki/C%2B%2B)
-[![Framework: Arduino](https://img.shields.io/badge/Framework-Arduino-red.svg)](https://www.arduino.cc/)
-[![Platform: ESP32-S3](https://img.shields.io/badge/Platform-ESP32--S3-green.svg)](https://www.espressif.com/en/products/socs/esp32-s3)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v6.1-blue)](https://github.com/espressif/esp-idf)
+[![Platform](https://img.shields.io/badge/platform-ESP32--S3-green)](https://www.espressif.com/en/products/socs/esp32-s3)
+[![Language](https://img.shields.io/badge/language-C-00599C)](https://en.wikipedia.org/wiki/C_(programming_language))
 
 Проект для платы Waveshare ESP32-S3 Touch LCD 7 с сенсорным дисплеем 800×480. Реализует:
 - Точку доступа Wi‑Fi (SoftAP) с TCP‑сервером.
