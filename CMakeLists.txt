@@ -3,4 +3,5 @@
 cmake_minimum_required(VERSION 3.22)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+add_compile_options(-Wno-error=use-after-free)
 project(arrigation_system)
