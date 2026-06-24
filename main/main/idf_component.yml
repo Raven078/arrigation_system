@@ -1,6 +1,0 @@
-## IDF Component Manager Manifest File
-dependencies:
-  espressif/esp_lvgl_port: "^2"   # Зависимость от компонента-адаптера LVGL для ESP
-  lvgl/lvgl: "~9.2.0"             # Зависимость от самой библиотеки LVGL v9
-  espressif/esp_lcd_st7701: "^2"  # Зависимость от драйвера для вашего дисплея ST7701
-  espressif/esp_lcd_touch_gt911: "^1" # Зависимость от драйвера для тачскрина GT911
