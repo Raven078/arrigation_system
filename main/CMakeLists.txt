@@ -1,36 +1,7 @@
-idf_component_register(
-    SRCS 
-        main.c 
-        file_logger.c
-        settings/display/display_init.c
-        settings/touch/touch.c
-        settings/wifi/wifi_ap.c
-        settings/wifi/tcp_server.c
-        settings/time/rtc_time.c
-        settings/time/time_from_build.c
-        GUI/wallpaper/wallpaper800400.c
-        GUI/fonts/my_arial24.c
-        GUI/ui/ui.c
-        GUI/ui/ui1.c
-        GUI/ui/ui_pomodoro.c
-        GUI/ui/ui_cucumber.c
-        GUI/wallpaper/greenhouse.c
-    INCLUDE_DIRS 
-        "."
-        "settings/display"
-        "settings/touch"
-        "settings/wifi"
-        "settings/time"
-        "GUI/wallpaper"
-        "GUI/fonts"
-        "GUI/ui"
-    REQUIRES 
-        lvgl 
-        esp_lvgl_port 
-        driver 
-        nvs_flash 
-        esp_psram 
-        esp_wifi 
-        esp_netif 
-        spiffs
-)
+# The following five lines of boilerplate have to be in your project's
+# CMakeLists in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.22)
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+add_compile_options(-Wno-error=use-after-free)
+project(arrigation_system)
