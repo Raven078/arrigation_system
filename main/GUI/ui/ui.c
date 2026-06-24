@@ -1,10 +1,12 @@
 #include "ui.h"
-#include "../wallpaper/wallpaper800400.h"   // относительный путь к wallpaper
+#include "../wallpaper/wallpaper800400.h"
 #include "../fonts/my_arial24.h"
 #include "../../settings/time/rtc_time.h"
-#include "ui1.h"                            // тот же каталог, что и ui.c
+#include "ui1.h"
 #include "ui_pomodoro.h"
 #include "ui_cucumber.h"
+#include "settings/wifi/wifi_ap.h"
+#include "settings/wifi/tcp_server.h"
 #include "esp_log.h"
 #include "lvgl.h"
 #include "freertos/FreeRTOS.h"
@@ -111,7 +113,6 @@ void ui_create_wallpaper(void) {
     lv_style_set_text_color(&style_text, lv_color_white());
     lv_style_set_text_font(&style_text, &lv_font_montserrat_14);
     lv_style_set_text_opa(&style_text, LV_OPA_COVER);
-    // Тень для читаемости
     lv_style_set_shadow_width(&style_text, 2);
     lv_style_set_shadow_color(&style_text, lv_color_black());
     lv_style_set_shadow_opa(&style_text, LV_OPA_70);
@@ -141,12 +142,25 @@ static void ap_button_event_handler(lv_event_t *e) {
 
 static void tomato_button_event_handler(lv_event_t *e) {
     ESP_LOGW(TAG, ">>> Button 'Tomato' pressed <<<");
-    ui_pomodoro_show_window();
+    // Проверяем наличие клиента по IP (192.168.4.2)
+    if (wifi_ap_is_ip_assigned("192.168.4.2")) {
+        // Отправляем команду "send_data" на порт 8889 нижнего уровня
+        tcp_send_command_to_ip("192.168.4.2", 8889, "send_data");
+        ui_pomodoro_show_window();
+    } else {
+        ESP_LOGW(TAG, "Client with IP 192.168.4.2 not connected");
+        // Можно показать всплывающее сообщение
+    }
 }
 
 static void cucumber_button_event_handler(lv_event_t *e) {
     ESP_LOGW(TAG, ">>> Button 'Cucumber' pressed <<<");
-    ui_cucumber_show_window();
+    if (wifi_ap_is_ip_assigned("192.168.4.3")) {
+        tcp_send_command_to_ip("192.168.4.3", 8889, "send_data");
+        ui_cucumber_show_window();
+    } else {
+        ESP_LOGW(TAG, "Client with IP 192.168.4.3 not connected");
+    }
 }
 
 void ui_handle_touch(void) {}

@@ -8,6 +8,11 @@
 #include <dirent.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <stdint.h>
+
+// Имя устройства по умолчанию (используется только если greenhouse не передан)
+#define DEFAULT_DEVICE_NAME "pomodoro"
 
 static const char *TAG = "FILE_LOGGER";
 static const char *BASE_PATH = "/spiffs";
@@ -15,28 +20,18 @@ static const char *BASE_PATH = "/spiffs";
 #define CHART_POINTS 144
 static int32_t chart_temp[CHART_POINTS] = {0};
 static int32_t chart_humi[CHART_POINTS] = {0};
+static int32_t chart_pump[CHART_POINTS] = {0};
+static int32_t chart_valve[CHART_POINTS] = {0};
 static int chart_point_count = 0;
 
-static bool parse_log_line_flexible(const char *line, float *temperature, int *moisture,
-                                    bool *sensor1, bool *sensor2) {
-    const char *ptr = line;
-    const char *semi = strchr(ptr, ';');
-    if (!semi) return false;
-    ptr = semi + 1;
-
-    char date[12], time[9];
-    float moist_float, temp;
-    int s1, s2;
-    int n = sscanf(ptr, "%11s %8s;%f;%f;%d;%d",
-                   date, time, &moist_float, &temp, &s1, &s2);
-    if (n == 6) {
-        *moisture = (int)moist_float;
-        *temperature = temp;
-        *sensor1 = (s1 == 1);
-        *sensor2 = (s2 == 1);
-        return true;
-    }
-    return false;
+static int time_to_index(const char *time_str) {
+    int hour, minute, second;
+    if (sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) != 3) return -1;
+    int minutes_since_midnight = hour * 60 + minute;
+    int index = minutes_since_midnight / 10;
+    if (index < 0) index = 0;
+    if (index >= CHART_POINTS) index = CHART_POINTS - 1;
+    return index;
 }
 
 void file_logger_init(void) {
@@ -68,13 +63,9 @@ bool file_logger_get_latest_data(const char* greenhouse,
     struct tm tm_info;
     localtime_r(&now, &tm_info);
     char filename[64];
-    if (greenhouse && strlen(greenhouse) > 0) {
-        char base[32];
-        strftime(base, sizeof(base), "_%d_%m_%Y.txt", &tm_info);
-        snprintf(filename, sizeof(filename), "/spiffs/%s%s", greenhouse, base);
-    } else {
-        strftime(filename, sizeof(filename), "/spiffs/%d_%m_%Y.txt", &tm_info);
-    }
+    const char *dev = (greenhouse && strlen(greenhouse) > 0) ? greenhouse : DEFAULT_DEVICE_NAME;
+    snprintf(filename, sizeof(filename), "/spiffs/%s_%d_%d_%d.txt",
+             dev, tm_info.tm_mday, tm_info.tm_mon + 1, tm_info.tm_year + 1900);
     ESP_LOGD(TAG, "Reading log file: %s", filename);
 
     FILE *f = fopen(filename, "r");
@@ -100,10 +91,31 @@ bool file_logger_get_latest_data(const char* greenhouse,
         return false;
     }
 
-    bool success = parse_log_line_flexible(last_valid_line, temperature, moisture,
-                                           sensor1_detected, sensor2_detected);
+    char *saveptr;
+    char *token = strtok_r(last_valid_line, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    token = strtok_r(NULL, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    token = strtok_r(NULL, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    float moist = atof(token);
+    token = strtok_r(NULL, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    float temp = atof(token);
+    token = strtok_r(NULL, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    int s1 = atoi(token);
+    token = strtok_r(NULL, ";", &saveptr);
+    if (!token) { free(last_valid_line); return false; }
+    int s2 = atoi(token);
+
+    *moisture = (int)moist;
+    *temperature = temp;
+    *sensor1_detected = (s1 == 1);
+    *sensor2_detected = (s2 == 1);
+
     free(last_valid_line);
-    return success;
+    return true;
 }
 
 void file_logger_cleanup_old_logs(int days_keep) {
@@ -120,12 +132,14 @@ void file_logger_cleanup_old_logs(int days_keep) {
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         const char *name = entry->d_name;
-        if (strncmp(name, "pomodoro_", 9) != 0) continue;
+        // Проверяем, что имя начинается с одного из известных префиксов
+        // Для простоты используем DEFAULT_DEVICE_NAME, но можно расширить
+        if (strncmp(name, DEFAULT_DEVICE_NAME, strlen(DEFAULT_DEVICE_NAME)) != 0) continue;
         size_t len = strlen(name);
         if (len < 5 || strcmp(name + len - 4, ".txt") != 0) continue;
 
         int day, month, year;
-        if (sscanf(name, "pomodoro_%d_%d_%d.txt", &day, &month, &year) != 3) {
+        if (sscanf(name, DEFAULT_DEVICE_NAME "_%d_%d_%d.txt", &day, &month, &year) != 3) {
             ESP_LOGW(TAG, "Skipping file with unexpected name: %s", name);
             continue;
         }
@@ -167,22 +181,13 @@ void file_logger_cleanup_old_logs(int days_keep) {
     closedir(dir);
 }
 
-static int time_to_index(const char *time_str) {
-    int hour, minute, second;
-    if (sscanf(time_str, "%d:%d:%d", &hour, &minute, &second) != 3) return -1;
-    int minutes_since_midnight = hour * 60 + minute;
-    int index = minutes_since_midnight / 10;
-    if (index < 0) index = 0;
-    if (index >= CHART_POINTS) index = CHART_POINTS - 1;
-    return index;
-}
-
 void file_logger_update_chart_data(void) {
     time_t now = time(NULL);
     struct tm tm_info;
     localtime_r(&now, &tm_info);
     char filename[64];
-    strftime(filename, sizeof(filename), "/spiffs/pomodoro_%d_%m_%Y.txt", &tm_info);
+    snprintf(filename, sizeof(filename), "/spiffs/%s_%d_%d_%d.txt",
+             DEFAULT_DEVICE_NAME, tm_info.tm_mday, tm_info.tm_mon + 1, tm_info.tm_year + 1900);
     file_logger_update_chart_data_from_file(filename);
 }
 
@@ -191,6 +196,8 @@ void file_logger_update_chart_data_from_file(const char *filename) {
 
     memset(chart_temp, 0, sizeof(chart_temp));
     memset(chart_humi, 0, sizeof(chart_humi));
+    memset(chart_pump, 0, sizeof(chart_pump));
+    memset(chart_valve, 0, sizeof(chart_valve));
     chart_point_count = 0;
 
     FILE *f = fopen(filename, "r");
@@ -200,28 +207,63 @@ void file_logger_update_chart_data_from_file(const char *filename) {
     }
 
     char line[256];
+    bool pump_state = false;
+    bool valve_state = false;
+
     while (fgets(line, sizeof(line), f)) {
         line[strcspn(line, "\r\n")] = 0;
         if (strlen(line) == 0) continue;
 
-        float temp;
-        int moisture;
-        bool s1, s2;
-        if (parse_log_line_flexible(line, &temp, &moisture, &s1, &s2)) {
-            const char *ptr = line;
-            const char *semi = strchr(ptr, ';');
-            if (semi) ptr = semi + 1;
-            char time_str[9];
-            if (sscanf(ptr, "%*s %8s", time_str) == 1) {
-                int idx = time_to_index(time_str);
-                if (idx >= 0 && idx < CHART_POINTS) {
-                    chart_temp[idx] = (int32_t)(temp * 10);
-                    chart_humi[idx] = moisture;
-                    chart_point_count++;
+        char *saveptr;
+        char *tokens[6];
+        int token_count = 0;
+        char *token = strtok_r(line, ";", &saveptr);
+        while (token && token_count < 6) {
+            tokens[token_count++] = token;
+            token = strtok_r(NULL, ";", &saveptr);
+        }
+        if (token_count < 3) continue;
+
+        // Имя устройства может быть любым, мы не проверяем его жёстко,
+        // так как файл уже выбран по имени теплицы.
+        // Но для надёжности можно проверить, но пропустим.
+
+        if (strcmp(tokens[2], "EVENT") == 0) {
+            if (token_count >= 5) {
+                if (strcmp(tokens[3], "pump") == 0) {
+                    pump_state = (strcmp(tokens[4], "on") == 0);
+                    ESP_LOGD(TAG, "EVENT: pump %s", tokens[4]);
+                } else if (strcmp(tokens[3], "valve") == 0) {
+                    valve_state = (strcmp(tokens[4], "on") == 0);
+                    ESP_LOGD(TAG, "EVENT: valve %s", tokens[4]);
                 }
             }
+            continue;
+        }
+
+        if (token_count >= 6) {
+            char *space_pos = strchr(tokens[1], ' ');
+            if (!space_pos) continue;
+            char time_str[9];
+            strncpy(time_str, space_pos + 1, 8);
+            time_str[8] = '\0';
+
+            int idx = time_to_index(time_str);
+            if (idx < 0 || idx >= CHART_POINTS) continue;
+
+            float moisture = atof(tokens[2]);
+            float temperature = atof(tokens[3]);
+            int s1 = atoi(tokens[4]);
+            int s2 = atoi(tokens[5]);
+
+            chart_temp[idx] = (int32_t)(temperature * 10);
+            chart_humi[idx] = (int32_t)moisture;
+            chart_pump[idx] = pump_state ? 80 : 0;
+            chart_valve[idx] = valve_state ? 80 : 0;
+            chart_point_count++;
         }
     }
+
     fclose(f);
     ESP_LOGI(TAG, "Chart data updated: %d valid points", chart_point_count);
 }
@@ -230,4 +272,62 @@ void file_logger_get_chart_data(int32_t **temp_array, int32_t **humi_array, int 
     *temp_array = chart_temp;
     *humi_array = chart_humi;
     *point_count = chart_point_count;
+}
+
+void file_logger_get_pump_valve_data(int32_t **pump_array, int32_t **valve_array, int *point_count) {
+    *pump_array = chart_pump;
+    *valve_array = chart_valve;
+    *point_count = chart_point_count;
+}
+
+void file_logger_append_data(const char *greenhouse, float temperature, int moisture,
+                             bool pump_state, bool valve_state) {
+    const char *dev = (greenhouse && strlen(greenhouse) > 0) ? greenhouse : DEFAULT_DEVICE_NAME;
+    time_t now = time(NULL);
+    struct tm tm_info;
+    localtime_r(&now, &tm_info);
+    char filename[64];
+    snprintf(filename, sizeof(filename), "/spiffs/%s_%d_%d_%d.txt",
+             dev, tm_info.tm_mday, tm_info.tm_mon + 1, tm_info.tm_year + 1900);
+
+    FILE *f = fopen(filename, "a");
+    if (!f) {
+        ESP_LOGE(TAG, "Cannot append to %s", filename);
+        return;
+    }
+    char time_str[9];
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm_info);
+    char date_str[11];
+    strftime(date_str, sizeof(date_str), "%Y-%m-%d", &tm_info);
+    fprintf(f, "%s;%s %s;%.1f;%.1f;%d;%d\n",
+            dev, date_str, time_str,
+            (float)moisture,
+            temperature,
+            pump_state ? 1 : 0,
+            valve_state ? 1 : 0);
+    fclose(f);
+    ESP_LOGD(TAG, "Appended data to %s", filename);
+}
+
+void file_logger_log_event(const char *greenhouse, const char *component, const char *state) {
+    const char *dev = (greenhouse && strlen(greenhouse) > 0) ? greenhouse : DEFAULT_DEVICE_NAME;
+    time_t now = time(NULL);
+    struct tm tm_info;
+    localtime_r(&now, &tm_info);
+    char filename[64];
+    snprintf(filename, sizeof(filename), "/spiffs/%s_%d_%d_%d.txt",
+             dev, tm_info.tm_mday, tm_info.tm_mon + 1, tm_info.tm_year + 1900);
+    FILE *f = fopen(filename, "a");
+    if (!f) {
+        ESP_LOGE(TAG, "Cannot append event to %s", filename);
+        return;
+    }
+    char time_str[9];
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm_info);
+    char date_str[11];
+    strftime(date_str, sizeof(date_str), "%Y-%m-%d", &tm_info);
+    fprintf(f, "%s;%s %s;EVENT;%s;%s\n",
+            dev, date_str, time_str, component, state);
+    fclose(f);
+    ESP_LOGD(TAG, "Event logged: %s %s %s", dev, component, state);
 }

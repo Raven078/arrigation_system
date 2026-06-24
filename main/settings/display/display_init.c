@@ -10,7 +10,7 @@
 #define LCD_V_RES 480
 #define LCD_PIXEL_CLOCK_HZ (14 * 1000 * 1000)
 #define RGB_DATA_WIDTH 16
-#define BOUNCE_BUFFER_HEIGHT 10  // Уменьшили до 10
+#define BOUNCE_BUFFER_HEIGHT 10
 #define BOUNCE_BUFFER_SIZE (LCD_H_RES * BOUNCE_BUFFER_HEIGHT)
 
 // Пины RGB
@@ -94,10 +94,7 @@ lv_display_t* display_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
-    // Подсветка (GPIO45)
-    gpio_config_t bk_gpio = { .mode = GPIO_MODE_OUTPUT, .pin_bit_mask = (1ULL << 45) };
-    gpio_config(&bk_gpio);
-    gpio_set_level(45, 1);
+    // Управление подсветкой УДАЛЕНО — теперь оно делается в main.c
 
     lv_display_t *disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     if (!disp) return NULL;

@@ -31,6 +31,7 @@ typedef struct {
 static client_info_t registered_clients[MAX_REGISTERED_CLIENTS];
 static int client_count = 0;
 
+// ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 static void save_log_line(const char *line, const char *greenhouse) {
     if (!line || strlen(line) < 10) return;
     time_t now = time(NULL);
@@ -146,6 +147,7 @@ static bool find_state_value(const char *json, const char *state_key) {
     return false;
 }
 
+// ===== ПАРСИНГ И ОБНОВЛЕНИЕ UI =====
 static void parse_and_update_ui(const char *json) {
     char device_name[64] = {0};
     char time_str[32] = {0};
@@ -171,12 +173,18 @@ static void parse_and_update_ui(const char *json) {
     bool valve_open = find_state_value(json, "valve");
     bool pump_on = find_state_value(json, "pump");
 
-    ESP_LOGI(TAG, "Device: %s, Time: %s, T=%.2f, H=%d%%, S1=%d, S2=%d, valve=%s, pump=%s",
+    int pump_speed = 0;
+    find_int_value(json, "pump_speed", &pump_speed);
+
+    ESP_LOGI(TAG, "Device: %s, Time: %s, T=%.2f, H=%d%%, S1=%d, S2=%d, valve=%s, pump=%s, speed=%d%%",
              device_name, time_str, temp_val, moisture_percent, det1, det2,
-             valve_open ? "open" : "closed", pump_on ? "on" : "off");
+             valve_open ? "open" : "closed", pump_on ? "on" : "off", pump_speed);
 
     if (strcmp(device_name, "pomodoro") == 0) {
         ui_pomodoro_update_current(temp_val, moisture_percent, det1, det2, valve_open, pump_on, time_str);
+        ui_pomodoro_update_speed(pump_speed);
+        ui_pomodoro_reset_client_check_timer();
+        file_logger_append_data("pomodoro", temp_val, moisture_percent, pump_on, valve_open);
     } else if (strcmp(device_name, "cucumber") == 0) {
         ESP_LOGI(TAG, "Cucumber data received, UI not implemented yet");
     } else {
@@ -184,6 +192,7 @@ static void parse_and_update_ui(const char *json) {
     }
 }
 
+// ===== ОБРАБОТКА ЗАГРУЗКИ ФАЙЛА =====
 static void handle_file_upload(int sock, const char *greenhouse, const char *date_str, size_t file_size) {
     char filename[64];
     snprintf(filename, sizeof(filename), "/spiffs/%s_%s.txt", greenhouse, date_str);
@@ -216,6 +225,7 @@ static void handle_file_upload(int sock, const char *greenhouse, const char *dat
     }
 }
 
+// ===== РЕГИСТРАЦИЯ КЛИЕНТОВ =====
 static void register_client(const char *ip, int cmd_port, const char *device_name) {
     for (int i = 0; i < client_count; i++) {
         if (strcmp(registered_clients[i].ip, ip) == 0) {
@@ -251,6 +261,7 @@ static void update_client_name(const char *ip, const char *device_name) {
     ESP_LOGW(TAG, "Client with IP %s not found for name update", ip);
 }
 
+// ===== ОБРАБОТКА КЛИЕНТА (TCP) =====
 static void handle_client(int sock) {
     struct sockaddr_in client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -378,6 +389,7 @@ static void handle_client_wrapper(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+// ===== СЕРВЕРНАЯ ЗАДАЧА =====
 static void tcp_server_task(void *pvParameters) {
     uint16_t port = *((uint16_t*)pvParameters);
     free(pvParameters);
@@ -440,10 +452,70 @@ static void tcp_server_task(void *pvParameters) {
     }
 }
 
+// ===== ПУБЛИЧНЫЕ ФУНКЦИИ =====
 void tcp_server_start(uint16_t port) {
     uint16_t *port_ptr = malloc(sizeof(uint16_t));
     *port_ptr = port;
     xTaskCreate(tcp_server_task, "tcp_server", 8192, port_ptr, 5, NULL);
+}
+
+bool tcp_is_client_connected(const char *name) {
+    if (!name) return false;
+    for (int i = 0; i < client_count; i++) {
+        if (strcmp(registered_clients[i].name, name) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void tcp_send_command_to_ip(const char *ip, uint16_t port, const char *cmd) {
+    if (!ip || !cmd) {
+        ESP_LOGE(TAG, "Invalid parameters");
+        return;
+    }
+    int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "Unable to create socket for command to %s:%d", ip, port);
+        return;
+    }
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip, &dest_addr.sin_addr) != 1) {
+        ESP_LOGE(TAG, "Invalid IP: %s", ip);
+        close(sock);
+        return;
+    }
+    if (connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) != 0) {
+        ESP_LOGE(TAG, "Cannot connect to %s:%d", ip, port);
+        close(sock);
+        return;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s\n", cmd);
+    int ret = send(sock, buf, strlen(buf), 0);
+    if (ret > 0) {
+        ESP_LOGI(TAG, "Command '%s' sent to %s:%d", cmd, ip, port);
+        char resp[32];
+        int len = recv(sock, resp, sizeof(resp) - 1, 1000);
+        if (len > 0) {
+            resp[len] = '\0';
+            ESP_LOGI(TAG, "Response from %s:%d: %s", ip, port, resp);
+            // Обработка ошибок
+            if (strncmp(resp, "ERROR", 5) == 0) {
+                if (strcmp(cmd, "pump_on") == 0) {
+                    file_logger_log_event("pomodoro", "pump", "off");
+                } else if (strcmp(cmd, "valve_open") == 0) {
+                    file_logger_log_event("pomodoro", "valve", "off");
+                }
+            }
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to send command to %s:%d", ip, port);
+    }
+    shutdown(sock, 0);
+    close(sock);
 }
 
 void tcp_send_command(const char *client_name, const char *cmd) {
